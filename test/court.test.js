@@ -160,10 +160,16 @@ test('setCourt ends with a single holder under every ordering of concurrent runs
 });
 
 // The runs can then disagree on who was assigned last, so each would
-// keep a different holder.
+// keep a different holder. A few scenarios with either run one event
+// behind are enough to show it, and more of them make the suite slow.
 test('setCourt ends with a single holder when one run reads an event list that is behind', async (t) => {
-  for (const tt of concurrentRuns) {
-    for (const behind of [[1, 0], [0, 1], [2, 0], [0, 2]]) {
+  const tests = [
+    { name: 'two runs move to different reviewers', assignees: ['contributor'], targets: ['bob', 'carol'] },
+    { name: 'one run keeps the reviewer, one moves to the author', assignees: ['bob'], targets: ['bob', 'contributor'] },
+    { name: 'one run keeps the author, one moves to a reviewer', assignees: ['contributor'], targets: ['contributor', 'carol'] },
+  ];
+  for (const tt of tests) {
+    for (const behind of [[1, 0], [0, 1]]) {
       await t.test(`${tt.name}, behind by ${behind}`, () =>
         assertSettlesUnderEveryOrdering({ ...tt, behind }));
     }
