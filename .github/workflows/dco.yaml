@@ -2,6 +2,8 @@ name: DCO
 
 on:
   pull_request:
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   contents: read
@@ -11,7 +13,11 @@ jobs:
     runs-on: ubuntu-latest
     name: Check DCO
     steps:
+      # The commits were checked on the pull request before it entered the
+      # queue. The job still has to run there, because the merge queue waits
+      # for this required check to report.
       - name: Run dco-check
+        if: github.event_name != 'merge_group'
         uses: christophebedard/dco-check@ec8bfc43106afe98b323ace9133650df10497e12 # 0.5.1
         with:
           args: --exclude-pattern 'dependabot\[bot\]@users\.noreply\.github\.com'
