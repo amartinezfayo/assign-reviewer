@@ -23,10 +23,10 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 
 // Runs one ordering. `setup` builds a fresh world and returns one function
 // per task, each taking the `gate` that wraps a github object for it.
-// `schedule[step]` picks which waiting task moves at that step, and tasks
-// beyond its end move in index order. Returns how many tasks were waiting
-// at each step, which is what the caller needs to find the next ordering.
-async function runOrdering(setup, schedule) {
+// `pick(step, count)` chooses which of the `count` waiting tasks moves at
+// that step. Returns the choices made and how many tasks were waiting at
+// each step, which is what a caller needs to find the next ordering.
+async function runOrdering(setup, pick) {
   const waiting = new Map();
   const { tasks, finish } = await setup((github, index) =>
     gated(github, () => new Promise(resolve => waiting.set(index, resolve))));
@@ -34,6 +34,7 @@ async function runOrdering(setup, schedule) {
   let running = tasks.length;
   const runs = tasks.map(task => task().finally(() => { running--; }));
   const width = [];
+  const taken = [];
   while (running > 0) {
     // The fake API does no real I/O, so one tick lets every released
     // task reach its next call or finish.
@@ -42,15 +43,17 @@ async function runOrdering(setup, schedule) {
     if (ready.length === 0) {
       continue;
     }
-    const index = ready[schedule[width.length] ?? 0];
+    const choice = pick(width.length, ready.length);
+    const index = ready[choice];
     width.push(ready.length);
+    taken.push(choice);
     const release = waiting.get(index);
     waiting.delete(index);
     release();
   }
   await Promise.all(runs);
-  await finish(schedule);
-  return width;
+  await finish(taken);
+  return { width, taken };
 }
 
 // Calls `setup` and runs its tasks once per possible ordering. Returns the
@@ -58,8 +61,9 @@ async function runOrdering(setup, schedule) {
 async function everyOrdering(setup) {
   let schedule = [];
   for (let count = 1; ; count++) {
-    const width = await runOrdering(setup, schedule);
-    const taken = width.map((_, step) => schedule[step] ?? 0);
+    // Tasks beyond the end of the schedule move in index order.
+    const { width, taken } = await runOrdering(setup,
+      (step) => schedule[step] ?? 0);
     let step = taken.length - 1;
     while (step >= 0 && taken[step] + 1 >= width[step]) {
       step--;
@@ -71,4 +75,20 @@ async function everyOrdering(setup) {
   }
 }
 
-module.exports = { everyOrdering };
+// Runs `count` orderings chosen by a seeded generator, for cases with too
+// many orderings to try them all. The same seed gives the same orderings.
+async function sampleOrderings(setup, count, seed) {
+  let state = seed;
+  const next = (bound) => {
+    // xorshift32
+    state ^= state << 13;
+    state ^= state >>> 17;
+    state ^= state << 5;
+    return (state >>> 0) % bound;
+  };
+  for (let i = 0; i < count; i++) {
+    await runOrdering(setup, (_, waiting) => next(waiting));
+  }
+}
+
+module.exports = { everyOrdering, sampleOrderings };

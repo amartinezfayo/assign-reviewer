@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const loadCourt = require('../lib/court.js');
 const { fakeGithub, fakeCore, pullRequest, assigneesOf, repo } = require('./fake_github.js');
-const { everyOrdering } = require('./interleave.js');
+const { everyOrdering, sampleOrderings } = require('./interleave.js');
 
 const pool = ['alice', 'bob', 'carol'];
 
@@ -143,6 +143,75 @@ test('setCourt ends with a single holder under every ordering of concurrent runs
       assert.ok(orderings > 1, 'expected more than one ordering');
     });
   }
+});
+
+// Three runs have too many orderings to try them all, and they can use up
+// the settle rounds, so the guarantee checked here is the weaker one that
+// always holds. The court never ends up empty, and it ends with a single
+// holder whenever no run reported giving up.
+test('setCourt never empties the court under sampled orderings of three runs', async () => {
+  const targets = ['contributor', 'bob', 'carol'];
+  let orderings = 0;
+  await sampleOrderings(async (gate) => {
+    const pr = pullRequest({ assignees: ['contributor', 'outsider'] });
+    const github = fakeGithub({ pool, prs: [pr] });
+    const snapshot = structuredClone(pr);
+    const cores = [];
+    const tasks = [];
+    for (const [i, login] of targets.entries()) {
+      const view = { ...github };
+      const core = fakeCore();
+      cores.push(core);
+      const court = await loadCourt({ github: view, context: { repo }, core });
+      Object.assign(view, gate(github, i));
+      tasks.push(() => court.setCourt(structuredClone(snapshot), login));
+    }
+    const finish = (taken) => {
+      orderings++;
+      const holders = assigneesOf(pr).filter(a => a !== 'outsider');
+      const gaveUp = cores.some(c => c.warnings.length > 0);
+      assert.ok(holders.length >= 1, `ordering [${taken}] emptied the court`);
+      assert.ok(holders.length === 1 || gaveUp,
+        `ordering [${taken}] ended with [${holders}] and no warning`);
+      assert.ok(assigneesOf(pr).includes('outsider'),
+        `ordering [${taken}] removed the outsider`);
+    };
+    return { tasks, finish };
+  }, 3000, 20261127);
+  assert.equal(orderings, 3000);
+});
+
+// Another run keeps putting back whoever this run removes, so the court
+// never settles. The run must stop on a read, since a removal that nobody
+// checks afterwards is what can leave the court empty.
+test('setCourt does not end on a removal when the court never settles', async () => {
+  const pr = pullRequest({ assignees: ['contributor', 'outsider'] });
+  const github = fakeGithub({ pool, prs: [pr] });
+  const calls = [];
+  for (const [area, methods] of Object.entries(github.rest)) {
+    for (const [name, method] of Object.entries(methods)) {
+      github.rest[area][name] = async (params) => {
+        calls.push(`${area}.${name}`);
+        return method(params);
+      };
+    }
+  }
+  const remove = github.rest.issues.removeAssignees;
+  github.rest.issues.removeAssignees = async (params) => {
+    await remove(params);
+    pr.assignees = [...pr.assignees, ...params.assignees.map(login => ({ login }))];
+  };
+  const core = fakeCore();
+  const court = await loadCourt({ github, context: { repo }, core });
+  const snapshot = structuredClone(pr);
+  pr.assignees.push({ login: 'carol' });
+
+  await court.setCourt(snapshot, 'bob');
+
+  assert.equal(calls.at(-1), 'pulls.get');
+  assert.deepEqual(core.warnings,
+    ['The court on PR #1 did not settle on a single assignee.']);
+  assert.ok(assigneesOf(pr).some(a => a !== 'outsider'));
 });
 
 test('setCourt leaves the court alone when GitHub does not assign the login', async () => {
