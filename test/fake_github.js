@@ -31,7 +31,9 @@ function fakeGithub({ pool, prs, reviews = {}, events = {}, comments = {} }) {
     issues: {
       addAssignees: async ({ issue_number, assignees }) => {
         const pr = find(issue_number);
-        pr.assignees = [...pr.assignees, ...assignees.map(login => ({ login }))];
+        // Like the API, adding a login that is already assigned is a no-op.
+        const added = assignees.filter(login => !pr.assignees.some(a => eq(a.login, login)));
+        pr.assignees = [...pr.assignees, ...added.map(login => ({ login }))];
       },
       removeAssignees: async ({ issue_number, assignees }) => {
         const pr = find(issue_number);

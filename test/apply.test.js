@@ -62,6 +62,27 @@ test('apply', async (t) => {
       want: ['contributor'],
     },
     {
+      name: 'an older review does not undo a newer one by the same reviewer',
+      pr: { assignees: ['bob'] },
+      reviews: [review('bob', 'COMMENTED'), review('bob', 'APPROVED')],
+      artifact: artifact('bob', 'commented'),
+      want: ['bob'],
+    },
+    {
+      name: 'a newer review by somebody else does not make a review stale',
+      pr: { assignees: ['bob'] },
+      reviews: [review('bob', 'CHANGES_REQUESTED'), review('carol', 'APPROVED')],
+      artifact: artifact('bob', 'changes_requested'),
+      want: ['contributor'],
+    },
+    {
+      name: 'a dismissed review does not hide the one before it',
+      pr: { assignees: ['bob'] },
+      reviews: [review('bob', 'COMMENTED'), review('bob', 'DISMISSED')],
+      artifact: artifact('bob', 'commented'),
+      want: ['contributor'],
+    },
+    {
       name: 'a review by an outsider is ignored',
       pr: { assignees: ['bob'] }, reviews: [review('outsider', 'CHANGES_REQUESTED')],
       artifact: artifact('outsider', 'changes_requested'),
@@ -77,6 +98,12 @@ test('apply', async (t) => {
     {
       name: 'a closed pull request is left alone',
       pr: { assignees: ['contributor'], state: 'closed' }, reviews: [review('bob', 'APPROVED')],
+      artifact: artifact('bob', 'approved'),
+      want: ['contributor'],
+    },
+    {
+      name: 'a draft is left alone',
+      pr: { assignees: ['contributor'], draft: true }, reviews: [review('bob', 'APPROVED')],
       artifact: artifact('bob', 'approved'),
       want: ['contributor'],
     },

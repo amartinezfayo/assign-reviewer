@@ -59,3 +59,25 @@ test('setCourt replaces flow participants and keeps other assignees', async () =
   await court.setCourt(pr, 'bob');
   assert.deepEqual(assigneesOf(pr), ['outsider', 'bob']);
 });
+
+test('setCourt converges when two runs write from the same snapshot', async (t) => {
+  // Each run holds its own copy of the pull request as it was before
+  // either wrote, the way two concurrent handlers do.
+  const tests = [
+    { name: 'the lowest login writes first', order: ['bob', 'carol'] },
+    { name: 'the lowest login writes last', order: ['carol', 'bob'] },
+    { name: 'one run hands the ball to the author', order: ['contributor', 'carol'], assignees: ['bob'], want: ['carol'] },
+    { name: 'both runs pick the same login', order: ['carol', 'carol'], want: ['outsider', 'carol'] },
+  ];
+  for (const tt of tests) {
+    await t.test(tt.name, async () => {
+      const pr = pullRequest({ assignees: tt.assignees ?? ['contributor', 'outsider'] });
+      const court = await courtFor([pr]);
+      const snapshots = tt.order.map(() => structuredClone(pr));
+      for (const [i, login] of tt.order.entries()) {
+        await court.setCourt(snapshots[i], login);
+      }
+      assert.deepEqual(assigneesOf(pr), tt.want ?? ['outsider', 'bob']);
+    });
+  }
+});

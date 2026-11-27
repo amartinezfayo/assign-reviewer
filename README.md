@@ -95,7 +95,8 @@ preserve them.
 - The capture artifact is untrusted, since a fork can run a modified copy
   of the capture workflow. The apply action validates every field, requires
   the pull request head to equal the head of the run that produced the
-  artifact, and confirms through the API that the claimed review exists.
+  artifact, and confirms through the API that the claimed review is the
+  submitter's latest one.
 - The only logins ever assigned are pool members and the pull request
   author as returned by the API.
 
