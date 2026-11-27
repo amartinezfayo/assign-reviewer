@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const loadCourt = require('../lib/court.js');
 const { fakeGithub, fakeCore, pullRequest, assigneesOf, repo } = require('./fake_github.js');
+const { everyOrdering } = require('./interleave.js');
 
 const pool = ['alice', 'bob', 'carol'];
 
@@ -60,13 +61,14 @@ test('setCourt replaces flow participants and keeps other assignees', async () =
   assert.deepEqual(assigneesOf(pr), ['outsider', 'bob']);
 });
 
-test('setCourt converges when two runs write from the same snapshot', async (t) => {
-  // Each run holds its own copy of the pull request as it was before
-  // either wrote, the way two concurrent handlers do.
+// Each run holds its own copy of the pull request as it was before either
+// wrote, the way two concurrent handlers do.
+test('setCourt lets the run that writes last win', async (t) => {
   const tests = [
-    { name: 'the lowest login writes first', order: ['bob', 'carol'] },
-    { name: 'the lowest login writes last', order: ['carol', 'bob'] },
-    { name: 'one run hands the ball to the author', order: ['contributor', 'carol'], assignees: ['bob'], want: ['carol'] },
+    { name: 'bob then carol', order: ['bob', 'carol'], want: ['outsider', 'carol'] },
+    { name: 'carol then bob', order: ['carol', 'bob'], want: ['outsider', 'bob'] },
+    { name: 'the author then carol', order: ['contributor', 'carol'], assignees: ['bob'], want: ['carol'] },
+    { name: 'carol then the author', order: ['carol', 'contributor'], assignees: ['bob'], want: ['contributor'] },
     { name: 'both runs pick the same login', order: ['carol', 'carol'], want: ['outsider', 'carol'] },
   ];
   for (const tt of tests) {
@@ -77,7 +79,68 @@ test('setCourt converges when two runs write from the same snapshot', async (t) 
       for (const [i, login] of tt.order.entries()) {
         await court.setCourt(snapshots[i], login);
       }
-      assert.deepEqual(assigneesOf(pr), tt.want ?? ['outsider', 'bob']);
+      assert.deepEqual(assigneesOf(pr), tt.want);
+    });
+  }
+});
+
+test('setCourt falls back to the lowest login when the event list names no holder', async (t) => {
+  for (const order of [['bob', 'carol'], ['carol', 'bob']]) {
+    await t.test(order.join(' then '), async () => {
+      const pr = pullRequest({ assignees: ['contributor'] });
+      const github = fakeGithub({ pool, prs: [pr] });
+      github.rest.issues.listEvents = async () => ({ data: [] });
+      const court = await loadCourt({ github, context: { repo }, core: fakeCore() });
+      const snapshots = order.map(() => structuredClone(pr));
+      for (const [i, login] of order.entries()) {
+        await court.setCourt(snapshots[i], login);
+      }
+      assert.deepEqual(assigneesOf(pr), ['bob']);
+    });
+  }
+});
+
+// The runs start from the same snapshot and their API calls are tried in
+// every possible order. Whatever the order, the court must end with one
+// flow participant, and the outsider must stay assigned.
+test('setCourt ends with a single holder under every ordering of concurrent runs', async (t) => {
+  const tests = [
+    { name: 'two runs move to different reviewers', assignees: ['contributor'], targets: ['bob', 'carol'] },
+    { name: 'two runs move to the same reviewer', assignees: ['contributor'], targets: ['carol', 'carol'] },
+    { name: 'one run keeps the reviewer, one moves to an author sorting after', author: 'zed', assignees: ['bob'], targets: ['bob', 'zed'] },
+    { name: 'one run keeps the reviewer, one moves to an author sorting before', author: 'aaron', assignees: ['bob'], targets: ['bob', 'aaron'] },
+    { name: 'one run keeps the author, one moves to a reviewer sorting after', author: 'aaron', assignees: ['aaron'], targets: ['aaron', 'carol'] },
+    { name: 'one run keeps the author, one moves to a reviewer sorting before', author: 'zed', assignees: ['zed'], targets: ['zed', 'alice'] },
+    { name: 'a reviewer and the author swap', assignees: ['bob'], targets: ['contributor', 'carol'] },
+    { name: 'nobody holds the ball yet', assignees: [], targets: ['alice', 'bob'] },
+  ];
+  for (const tt of tests) {
+    await t.test(tt.name, async () => {
+      const author = tt.author ?? 'contributor';
+      const orderings = await everyOrdering(async (gate) => {
+        const pr = pullRequest({ author, assignees: [...tt.assignees, 'outsider'] });
+        const github = fakeGithub({ pool, prs: [pr] });
+        const snapshot = structuredClone(pr);
+        const tasks = [];
+        for (const [i, login] of tt.targets.entries()) {
+          // The pool is loaded before the calls start taking turns.
+          const view = { ...github };
+          const court = await loadCourt({ github: view, context: { repo }, core: fakeCore() });
+          Object.assign(view, gate(github, i));
+          tasks.push(() => court.setCourt(structuredClone(snapshot), login));
+        }
+        const finish = (schedule) => {
+          const holders = assigneesOf(pr).filter(a => a !== 'outsider');
+          assert.equal(holders.length, 1,
+            `ordering [${schedule}] ended with [${assigneesOf(pr)}]`);
+          assert.ok(tt.targets.includes(holders[0]),
+            `ordering [${schedule}] ended with ${holders[0]}`);
+          assert.ok(assigneesOf(pr).includes('outsider'),
+            `ordering [${schedule}] removed the outsider`);
+        };
+        return { tasks, finish };
+      });
+      assert.ok(orderings > 1, 'expected more than one ordering');
     });
   }
 });
@@ -90,7 +153,7 @@ test('setCourt leaves the court alone when GitHub does not assign the login', as
   await court.setCourt(pr, 'contributor');
   assert.deepEqual(assigneesOf(pr), ['bob', 'outsider']);
   assert.deepEqual(core.warnings,
-    ['GitHub did not assign contributor on PR #1, leaving court unchanged.']);
+    ['contributor is not assigned on PR #1 after being added, leaving court unchanged.']);
 });
 
 test('a malformed pool file is reported by name', async (t) => {

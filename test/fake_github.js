@@ -16,6 +16,17 @@ function fakeGithub({ pool, prs, reviews = {}, events = {}, comments = {}, poolF
   };
   const eq = (a, b) => a.toLowerCase() === b.toLowerCase();
 
+  // Assignee changes show up in the event list in the order they
+  // happened, made by the workflow's bot identity.
+  const recordEvents = (number, event, logins) => {
+    events[number] = [...(events[number] || []), ...logins.map(login => ({
+      event,
+      created_at: new Date().toISOString(),
+      assigner: { login: 'github-actions[bot]', type: 'Bot' },
+      assignee: { login },
+    }))];
+  };
+
   const rest = {
     repos: {
       getContent: async ({ path }) => {
@@ -27,7 +38,8 @@ function fakeGithub({ pool, prs, reviews = {}, events = {}, comments = {}, poolF
       },
     },
     pulls: {
-      get: async ({ pull_number }) => ({ data: find(pull_number) }),
+      // A copy, since a response does not change when the assignees do.
+      get: async ({ pull_number }) => ({ data: structuredClone(find(pull_number)) }),
       list: async () => ({ data: prs }),
       listReviews: async ({ pull_number }) => ({ data: reviews[pull_number] || [] }),
     },
@@ -39,10 +51,14 @@ function fakeGithub({ pool, prs, reviews = {}, events = {}, comments = {}, poolF
           !pr.assignees.some(a => eq(a.login, login)) &&
           !unassignable.some(u => eq(u, login)));
         pr.assignees = [...pr.assignees, ...added.map(login => ({ login }))];
+        recordEvents(issue_number, 'assigned', added);
       },
       removeAssignees: async ({ issue_number, assignees }) => {
         const pr = find(issue_number);
-        pr.assignees = pr.assignees.filter(a => !assignees.some(r => eq(r, a.login)));
+        const removed = pr.assignees.map(a => a.login)
+          .filter(login => assignees.some(r => eq(r, login)));
+        pr.assignees = pr.assignees.filter(a => !removed.includes(a.login));
+        recordEvents(issue_number, 'unassigned', removed);
       },
       listEvents: async ({ issue_number }) => ({ data: events[issue_number] || [] }),
       listComments: async ({ issue_number }) => ({ data: comments[issue_number] || [] }),
