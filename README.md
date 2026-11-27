@@ -105,6 +105,8 @@ propose updates. This repository holds code that runs with write tokens in
 every repository that opts in, so its default branch should be protected
 and changes reviewed by its owners.
 
+To report a vulnerability, see [SECURITY.md](SECURITY.md).
+
 ## Development
 
 The logic lives in `lib/` as plain Node modules that receive the
