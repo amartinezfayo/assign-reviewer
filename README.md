@@ -19,9 +19,11 @@ action, and keep that assignee up to date as the review progresses.
 | Pool member requests changes or submits a comment review | Always | The author |
 | Pool member approves | Always | That pool member, who is expected to merge |
 
-Activity-driven moves only happen when the acting user currently holds the
-ball. Repeated pushes or comments by the same person are therefore no-ops,
-and a manual assignee change is never overridden. Draft pull requests and
+Activity-driven moves depend on who currently holds the ball. A comment
+only moves it when the commenter holds it. A push or a review re-request
+only moves it when the author holds it, whoever pushed or made the request.
+Repeated pushes or comments are therefore no-ops, and a manual assignee
+change is never overridden. Draft pull requests and
 pull requests opened by bots are left alone. Assignees who are neither the
 author nor in the pool are never touched.
 
