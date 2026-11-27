@@ -13,7 +13,7 @@ action, and keep that assignee up to date as the review progresses.
 |---|---|---|
 | Pull request opened or marked ready | Always | A random pool member other than the author |
 | Review re-requested from a pool member | The author holds the ball | The requested pool member |
-| Author pushes commits | The author holds the ball | The pool member who reviewed most recently |
+| Commits are pushed, by the author or anybody else | The author holds the ball | The pool member who reviewed most recently |
 | Author comments or replies on review threads | The author holds the ball | The pool member who reviewed most recently |
 | Pool member comments in the conversation | That pool member holds the ball | The author |
 | Pool member requests changes or submits a comment review | Always | The author |
