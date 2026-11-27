@@ -100,48 +100,73 @@ test('setCourt falls back to the lowest login when the event list names no holde
   }
 });
 
-// The runs start from the same snapshot and their API calls are tried in
-// every possible order. Whatever the order, the court must end with one
-// flow participant, and the outsider must stay assigned.
+// A view of `github` whose event list misses the newest `steps` events,
+// the way the events API can trail the assignees for a moment.
+function withEventsBehind(github, steps) {
+  const { listEvents } = github.rest.issues;
+  github.rest.issues.listEvents = async (params) => {
+    const { data } = await listEvents(params);
+    return { data: data.slice(0, Math.max(0, data.length - steps)) };
+  };
+}
+
+// Tries the API calls of concurrent setCourt runs in every possible
+// order. The runs start from the same snapshot. Whatever the order, the
+// court must end with one flow participant, and the outsider must stay
+// assigned. `behind` holds, per run, how many events its list trails by.
+async function assertSettlesUnderEveryOrdering({ author = 'contributor', assignees, targets, behind = [] }) {
+  const orderings = await everyOrdering(async (gate) => {
+    const pr = pullRequest({ author, assignees: [...assignees, 'outsider'] });
+    const github = fakeGithub({ pool, prs: [pr] });
+    const snapshot = structuredClone(pr);
+    const tasks = [];
+    for (const [i, login] of targets.entries()) {
+      // The pool is loaded before the calls start taking turns.
+      const view = { ...github };
+      const court = await loadCourt({ github: view, context: { repo }, core: fakeCore() });
+      Object.assign(view, gate(github, i));
+      withEventsBehind(view, behind[i] ?? 0);
+      tasks.push(() => court.setCourt(structuredClone(snapshot), login));
+    }
+    const finish = (schedule) => {
+      const holders = assigneesOf(pr).filter(a => a !== 'outsider');
+      assert.equal(holders.length, 1,
+        `ordering [${schedule}] ended with [${assigneesOf(pr)}]`);
+      assert.ok(targets.includes(holders[0]),
+        `ordering [${schedule}] ended with ${holders[0]}`);
+      assert.ok(assigneesOf(pr).includes('outsider'),
+        `ordering [${schedule}] removed the outsider`);
+    };
+    return { tasks, finish };
+  });
+  assert.ok(orderings > 1, 'expected more than one ordering');
+}
+
+const concurrentRuns = [
+  { name: 'two runs move to different reviewers', assignees: ['contributor'], targets: ['bob', 'carol'] },
+  { name: 'two runs move to the same reviewer', assignees: ['contributor'], targets: ['carol', 'carol'] },
+  { name: 'one run keeps the reviewer, one moves to an author sorting after', author: 'zed', assignees: ['bob'], targets: ['bob', 'zed'] },
+  { name: 'one run keeps the reviewer, one moves to an author sorting before', author: 'aaron', assignees: ['bob'], targets: ['bob', 'aaron'] },
+  { name: 'one run keeps the author, one moves to a reviewer sorting after', author: 'aaron', assignees: ['aaron'], targets: ['aaron', 'carol'] },
+  { name: 'one run keeps the author, one moves to a reviewer sorting before', author: 'zed', assignees: ['zed'], targets: ['zed', 'alice'] },
+  { name: 'a reviewer and the author swap', assignees: ['bob'], targets: ['contributor', 'carol'] },
+  { name: 'nobody holds the ball yet', assignees: [], targets: ['alice', 'bob'] },
+];
+
 test('setCourt ends with a single holder under every ordering of concurrent runs', async (t) => {
-  const tests = [
-    { name: 'two runs move to different reviewers', assignees: ['contributor'], targets: ['bob', 'carol'] },
-    { name: 'two runs move to the same reviewer', assignees: ['contributor'], targets: ['carol', 'carol'] },
-    { name: 'one run keeps the reviewer, one moves to an author sorting after', author: 'zed', assignees: ['bob'], targets: ['bob', 'zed'] },
-    { name: 'one run keeps the reviewer, one moves to an author sorting before', author: 'aaron', assignees: ['bob'], targets: ['bob', 'aaron'] },
-    { name: 'one run keeps the author, one moves to a reviewer sorting after', author: 'aaron', assignees: ['aaron'], targets: ['aaron', 'carol'] },
-    { name: 'one run keeps the author, one moves to a reviewer sorting before', author: 'zed', assignees: ['zed'], targets: ['zed', 'alice'] },
-    { name: 'a reviewer and the author swap', assignees: ['bob'], targets: ['contributor', 'carol'] },
-    { name: 'nobody holds the ball yet', assignees: [], targets: ['alice', 'bob'] },
-  ];
-  for (const tt of tests) {
-    await t.test(tt.name, async () => {
-      const author = tt.author ?? 'contributor';
-      const orderings = await everyOrdering(async (gate) => {
-        const pr = pullRequest({ author, assignees: [...tt.assignees, 'outsider'] });
-        const github = fakeGithub({ pool, prs: [pr] });
-        const snapshot = structuredClone(pr);
-        const tasks = [];
-        for (const [i, login] of tt.targets.entries()) {
-          // The pool is loaded before the calls start taking turns.
-          const view = { ...github };
-          const court = await loadCourt({ github: view, context: { repo }, core: fakeCore() });
-          Object.assign(view, gate(github, i));
-          tasks.push(() => court.setCourt(structuredClone(snapshot), login));
-        }
-        const finish = (schedule) => {
-          const holders = assigneesOf(pr).filter(a => a !== 'outsider');
-          assert.equal(holders.length, 1,
-            `ordering [${schedule}] ended with [${assigneesOf(pr)}]`);
-          assert.ok(tt.targets.includes(holders[0]),
-            `ordering [${schedule}] ended with ${holders[0]}`);
-          assert.ok(assigneesOf(pr).includes('outsider'),
-            `ordering [${schedule}] removed the outsider`);
-        };
-        return { tasks, finish };
-      });
-      assert.ok(orderings > 1, 'expected more than one ordering');
-    });
+  for (const tt of concurrentRuns) {
+    await t.test(tt.name, () => assertSettlesUnderEveryOrdering(tt));
+  }
+});
+
+// The runs can then disagree on who was assigned last, so each would
+// keep a different holder.
+test('setCourt ends with a single holder when one run reads an event list that is behind', async (t) => {
+  for (const tt of concurrentRuns) {
+    for (const behind of [[1, 0], [0, 1], [2, 0], [0, 2]]) {
+      await t.test(`${tt.name}, behind by ${behind}`, () =>
+        assertSettlesUnderEveryOrdering({ ...tt, behind }));
+    }
   }
 });
 
@@ -212,6 +237,49 @@ test('setCourt does not end on a removal when the court never settles', async ()
   assert.deepEqual(core.warnings,
     ['The court on PR #1 did not settle on a single assignee.']);
   assert.ok(assigneesOf(pr).some(a => a !== 'outsider'));
+});
+
+// Another run removes this run's target right after every assignment but
+// the last one. The assignment that follows the last round is read back
+// like the others, so the run reports the holder instead of giving up.
+test('setCourt reads the court again after the last assignment', async () => {
+  const pr = pullRequest({ assignees: ['contributor', 'outsider'] });
+  const github = fakeGithub({ pool, prs: [pr] });
+  const calls = [];
+  for (const [area, methods] of Object.entries(github.rest)) {
+    for (const [name, method] of Object.entries(methods)) {
+      github.rest[area][name] = async (params) => {
+        calls.push(`${area}.${name}`);
+        return method(params);
+      };
+    }
+  }
+  const remove = github.rest.issues.removeAssignees;
+  github.rest.issues.removeAssignees = async (params) => {
+    await remove(params);
+    pr.assignees = pr.assignees.filter(a => a.login !== 'bob');
+  };
+  const add = github.rest.issues.addAssignees;
+  let undone = 0;
+  github.rest.issues.addAssignees = async (params) => {
+    await add(params);
+    // The first assignment is the move itself, which setCourt reads back
+    // before the settle step starts.
+    if (calls.filter(c => c === 'issues.addAssignees').length > 1 && undone < 5) {
+      undone++;
+      pr.assignees = pr.assignees.filter(a => a.login !== 'bob');
+    }
+  };
+  const core = fakeCore();
+  const court = await loadCourt({ github, context: { repo }, core });
+
+  await court.setCourt(structuredClone(pr), 'bob');
+
+  assert.equal(undone, 5);
+  assert.deepEqual(calls.slice(-2), ['issues.addAssignees', 'pulls.get']);
+  assert.deepEqual(core.warnings, []);
+  assert.equal(core.infos.at(-1), 'Ball in court on PR #1 is now with bob.');
+  assert.deepEqual(assigneesOf(pr), ['outsider', 'bob']);
 });
 
 test('setCourt leaves the court alone when GitHub does not assign the login', async () => {
