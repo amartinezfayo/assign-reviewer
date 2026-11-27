@@ -1,0 +1,28 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    # The root entry covers .github/workflows. Each action.yml lives in its
+    # own directory and has to be listed to be scanned.
+    directories:
+      - /
+      - /assign
+      - /capture
+      - /apply
+      - /reconcile
+    schedule:
+      interval: weekly
+    # Wait for new action releases to age before opening update PRs, so
+    # that a compromised release has a window to be detected and reported
+    # by the ecosystem before it is proposed for review.
+    cooldown:
+      default-days: 7
+    # Collapse all minor and patch updates into a single weekly PR.
+    # Major bumps remain ungrouped and each one opens its own PR, so
+    # each breaking change can be reviewed independently.
+    groups:
+      minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch

@@ -1,0 +1,27 @@
+name: Assign reviewer, apply review
+description: >-
+  Moves the ball-in-court assignee for the review that the capture action
+  recorded.
+
+# Run this from a job triggered by workflow_run on the completion of the
+# workflow that runs the capture action, only when that run succeeded.
+# The job needs issues and pull-requests write permissions, plus actions
+# read to download the artifact.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: assign-reviewer-review
+        run-id: ${{ github.event.workflow_run.id }}
+        github-token: ${{ github.token }}
+        path: ${{ runner.temp }}/assign-reviewer-review
+    - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      env:
+        ASSIGN_REVIEWER_LIB: ${{ github.action_path }}/../lib
+        REVIEW_FILE: ${{ runner.temp }}/assign-reviewer-review/review.json
+      with:
+        script: |
+          const run = require(`${process.env.ASSIGN_REVIEWER_LIB}/apply.js`);
+          await run({ github, context, core, reviewFile: process.env.REVIEW_FILE });

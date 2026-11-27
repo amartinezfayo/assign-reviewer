@@ -1,0 +1,57 @@
+name: assign-reviewer
+
+# Rotating assignee ("ball in court") for pull requests.
+#
+# This workflow does not request reviewers. The repository's CODEOWNERS file
+# already requests the maintainers on every PR. Instead it designates a single
+# maintainer as the PR assignee to show who owns the next action, and keeps
+# that up to date as the PR is opened, pushed to and commented on.
+#
+# The logic is shared across SPIFFE projects and lives in
+# https://github.com/spiffe/assign-reviewer, which documents the rules. The
+# maintainers taking part in the rotation are listed in
+# .github/reviewer-pool.json.
+#
+# Review submissions are handled by the companion
+# assign-reviewer-review-capture and assign-reviewer-review-apply workflows,
+# and review transitions that those drop are picked up by
+# assign-reviewer-reconcile.
+#
+# The pull_request_target events carry a write-scoped token even for PRs from
+# forks, and issue_comment also runs from the default branch with a
+# write-scoped token. This is safe because the job has no checkout step and
+# the action never runs any code from the PR. It only reads PR metadata and
+# calls the assignee API.
+
+on:
+  pull_request_target:
+    types: [opened, ready_for_review, review_requested, synchronize]
+  issue_comment:
+    types: [created]
+
+# Serialize runs per PR and per event action. Runs for different actions can
+# still overlap, and the action settles on a single assignee when they do.
+# The action is part of the group on purpose: when a PR
+# opens, GitHub fires the "opened" event together with a burst of CODEOWNERS
+# "review_requested" events, and a single group plus cancel-in-progress:
+# false makes GitHub cancel all but the latest pending run, which can drop
+# the "opened" run that assigns the reviewer. Keeping each action in its own
+# group lets "opened" run on its own while same-action bursts (rapid pushes,
+# comment streams) still collapse safely. issue_comment events carry an issue
+# payload instead of a pull_request one, hence the number fallback.
+concurrency:
+  group: assign-reviewer-${{ github.event.pull_request.number || github.event.issue.number }}-${{ github.event_name }}-${{ github.event.action }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  assign-reviewer:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read       # read .github/reviewer-pool.json
+      issues: write        # add/remove assignees (the issues API endpoint)
+      pull-requests: write # add/remove assignees on the pull request
+    steps:
+      - uses: spiffe/assign-reviewer/assign@0000000000000000000000000000000000000000 # TODO pin to a release commit

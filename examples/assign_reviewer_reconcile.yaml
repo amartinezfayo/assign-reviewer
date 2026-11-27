@@ -1,0 +1,58 @@
+name: assign-reviewer-reconcile
+
+# Catch-up pass for the ball-in-court assignee.
+#
+# The review half of the flow (assign-reviewer-review-capture and
+# assign-reviewer-review-apply) depends on pull_request_review, which GitHub
+# does not always run. The capture run waits for approval on a first-time
+# contributor's pull request, is not created while the pull request has a
+# merge conflict, and can fail or be cancelled. Each of those loses the
+# review transition.
+#
+# This pass runs from the default branch with a write-scoped token, so
+# neither the approval gate nor a merge conflict affects it. It reproduces
+# the transition of the latest review on recently reviewed pull requests and
+# corrects the assignee where that transition was dropped. The logic lives in
+# https://github.com/spiffe/assign-reviewer, which documents when the pass
+# acts and when it stands down.
+#
+# Security. Neither trigger runs pull request code and the job has no
+# checkout step. The dispatch input is passed as an action input, which
+# reaches the script through the environment and is validated there.
+
+on:
+  schedule:
+    # Random minute numbers to avoid GH scheduler stampede
+    - cron: '13,43 * * * *'
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Reconcile only this pull request, ignoring the one-day window
+        required: false
+        type: string
+
+# Serialize passes so two of them cannot race on the assignee. A running pass
+# is never cancelled. The group keeps a single pending run, so a dispatch
+# waiting behind a running pass is cancelled if another run arrives first,
+# and has to be dispatched again.
+concurrency:
+  group: assign-reviewer-reconcile
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  reconcile:
+    # Scheduled workflows also fire in forks that enable Actions, where
+    # there is no rotation to maintain.
+    if: github.repository == 'OWNER/REPO' # replace with the opting repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read       # read .github/reviewer-pool.json
+      issues: write        # add/remove assignees (the issues API endpoint)
+      pull-requests: write # add/remove assignees on the pull request
+    steps:
+      - uses: spiffe/assign-reviewer/reconcile@0000000000000000000000000000000000000000 # TODO pin to a release commit
+        with:
+          pr-number: ${{ inputs.pr_number }}

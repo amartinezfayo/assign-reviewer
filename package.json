@@ -1,0 +1,9 @@
+{
+  "name": "assign-reviewer",
+  "private": true,
+  "description": "Ball-in-court assignee rotation for SPIFFE project pull requests",
+  "license": "Apache-2.0",
+  "scripts": {
+    "test": "node --test \"test/*.test.js\""
+  }
+}

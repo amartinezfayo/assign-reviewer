@@ -1,0 +1,30 @@
+name: Assign reviewer, reconcile
+description: >-
+  Catch-up pass that reapplies review transitions GitHub dropped on
+  recently reviewed pull requests.
+
+# Run this from a job triggered by schedule and workflow_dispatch, with
+# issues and pull-requests write permissions. Guard the job with a
+# github.repository check so the schedule does nothing in forks.
+
+inputs:
+  pr-number:
+    description: >-
+      Reconcile only this pull request, ignoring the one-day window. Leave
+      empty for a pass over recently updated pull requests.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      env:
+        ASSIGN_REVIEWER_LIB: ${{ github.action_path }}/../lib
+        # Reaches the script through the environment and is validated
+        # there before it reaches the API.
+        PR_NUMBER: ${{ inputs.pr-number }}
+      with:
+        script: |
+          const run = require(`${process.env.ASSIGN_REVIEWER_LIB}/reconcile.js`);
+          await run({ github, context, core, requested: process.env.PR_NUMBER });

@@ -1,0 +1,46 @@
+name: assign-reviewer-review-apply
+
+# Privileged half of the review ball-in-court update.
+#
+# Triggered by the completion of assign-reviewer-review-capture via
+# workflow_run. A workflow_run run executes from the default branch with a
+# write-scoped token even when the originating review was on a PR from a fork,
+# which is what lets it move the assignee where the pull_request_review event
+# could not. The logic lives in https://github.com/spiffe/assign-reviewer,
+# which documents the rules and how the untrusted capture artifact is
+# validated.
+#
+# A capture run that never completes does not reach this workflow. The
+# assign-reviewer-reconcile workflow reproduces the transition it would
+# have applied.
+#
+# Security. The job has no checkout step and the action never runs any PR
+# code.
+
+on:
+  workflow_run:
+    workflows: [assign-reviewer-review-capture]
+    types: [completed]
+
+# Serialize applies for the same commit so close-together reviews don't race on
+# the assignee. The PR number is not in the workflow_run context for fork PRs,
+# so the head SHA is used as the grouping key.
+concurrency:
+  group: assign-reviewer-review-apply-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    # Only act when the capture run succeeded (so the artifact exists).
+    if: github.event.workflow_run.conclusion == 'success'
+    permissions:
+      contents: read       # read .github/reviewer-pool.json
+      issues: write        # add/remove assignees (the issues API endpoint)
+      pull-requests: write # add/remove assignees on the pull request
+      actions: read        # download the artifact from the capture run
+    steps:
+      - uses: spiffe/assign-reviewer/apply@0000000000000000000000000000000000000000 # TODO pin to a release commit

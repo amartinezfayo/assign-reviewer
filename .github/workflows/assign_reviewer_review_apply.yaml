@@ -1,0 +1,44 @@
+name: assign-reviewer-review-apply
+
+# Runs this repository's own apply action when a capture run completes. It
+# is the privileged half of the review update. A workflow_run run executes
+# from the default branch with a write-scoped token even when the review
+# was on a PR from a fork.
+#
+# Security. The checkout names the default branch, so no PR code is ever
+# fetched or run. The action treats the capture artifact as untrusted.
+
+on:
+  workflow_run:
+    workflows: [assign-reviewer-review-capture]
+    types: [completed]
+
+# Serialize applies for the same commit so close-together reviews don't race on
+# the assignee. The PR number is not in the workflow_run context for fork PRs,
+# so the head SHA is used as the grouping key.
+concurrency:
+  group: assign-reviewer-review-apply-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    # Only act when the capture run succeeded (so the artifact exists).
+    if: github.event.workflow_run.conclusion == 'success'
+    permissions:
+      contents: read       # check out the action, read .github/reviewer-pool.json
+      issues: write        # add/remove assignees (the issues API endpoint)
+      pull-requests: write # add/remove assignees on the pull request
+      actions: read        # download the artifact from the capture run
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: |
+            apply
+            lib
+      - uses: ./apply
