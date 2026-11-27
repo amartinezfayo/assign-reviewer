@@ -1,0 +1,28 @@
+name: Assign reviewer, capture review
+description: >-
+  Records a submitted pull request review in an artifact for the apply
+  action. Needs no write permission.
+
+# Run this from a job triggered by pull_request_review. That event runs
+# the pull request's own copy of the calling workflow with a read-only
+# token on forks, so this action only writes an artifact and the apply
+# action treats that artifact as untrusted.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      env:
+        ASSIGN_REVIEWER_LIB: ${{ github.action_path }}/../lib
+        REVIEW_DIR: ${{ runner.temp }}/assign-reviewer-review
+      with:
+        script: |
+          const run = require(`${process.env.ASSIGN_REVIEWER_LIB}/capture.js`);
+          run({ context, core, dir: process.env.REVIEW_DIR });
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        # The apply action downloads the artifact under this name.
+        name: assign-reviewer-review
+        path: ${{ runner.temp }}/assign-reviewer-review/review.json
+        retention-days: 1
+        if-no-files-found: error # fail loudly rather than produce no artifact

@@ -1,0 +1,54 @@
+name: assign-reviewer-reconcile
+
+# Runs this repository's own reconcile action, which reapplies review
+# transitions that the capture and apply workflows dropped.
+#
+# Security. Neither trigger runs pull request code. The checkout names the
+# default branch, since a workflow_dispatch run would otherwise use the
+# branch it was dispatched from. The dispatch input is passed as an action
+# input, which reaches the script through the environment and is validated
+# there.
+
+on:
+  schedule:
+    # Random minute numbers to avoid GH scheduler stampede
+    - cron: '7,37 * * * *'
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Reconcile only this pull request, ignoring the one-day window
+        required: false
+        type: string
+
+# Serialize passes so two of them cannot race on the assignee. A running pass
+# is never cancelled. The group keeps a single pending run, so a dispatch
+# waiting behind a running pass is cancelled if another run arrives first,
+# and has to be dispatched again.
+concurrency:
+  group: assign-reviewer-reconcile
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  reconcile:
+    # Scheduled workflows also fire in forks that enable Actions, where
+    # there is no rotation to maintain.
+    if: github.repository == 'spiffe/assign-reviewer'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read       # check out the action, read .github/reviewer-pool.json
+      issues: write        # add/remove assignees (the issues API endpoint)
+      pull-requests: write # add/remove assignees on the pull request
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: |
+            reconcile
+            lib
+      - uses: ./reconcile
+        with:
+          pr-number: ${{ inputs.pr_number }}

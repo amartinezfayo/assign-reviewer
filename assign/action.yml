@@ -1,0 +1,19 @@
+name: Assign reviewer
+description: >-
+  Keeps a single ball-in-court assignee on a pull request up to date on
+  pull_request_target and issue_comment events.
+
+# Run this from a job triggered by pull_request_target or issue_comment,
+# with issues and pull-requests write permissions. It needs no checkout
+# and never runs code from the pull request.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      env:
+        ASSIGN_REVIEWER_LIB: ${{ github.action_path }}/../lib
+      with:
+        script: |
+          const run = require(`${process.env.ASSIGN_REVIEWER_LIB}/assign.js`);
+          await run({ github, context, core });
