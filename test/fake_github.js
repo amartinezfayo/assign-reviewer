@@ -2,7 +2,10 @@
 // and `core` objects. Assignee calls mutate the stored pull request so
 // tests assert on the resulting state.
 
-function fakeGithub({ pool, prs, reviews = {}, events = {}, comments = {} }) {
+// `poolFile` replaces the pool file's text, for malformed-file tests, and
+// `unassignable` lists logins that addAssignees drops the way the API
+// drops a login it cannot assign.
+function fakeGithub({ pool, prs, reviews = {}, events = {}, comments = {}, poolFile, unassignable = [] }) {
   const byNumber = new Map(prs.map(pr => [pr.number, pr]));
   const find = (number) => {
     const pr = byNumber.get(number);
@@ -19,7 +22,7 @@ function fakeGithub({ pool, prs, reviews = {}, events = {}, comments = {} }) {
         if (path !== '.github/reviewer-pool.json') {
           throw new Error(`unexpected path ${path}`);
         }
-        const content = Buffer.from(JSON.stringify({ reviewers: pool })).toString('base64');
+        const content = Buffer.from(poolFile ?? JSON.stringify({ reviewers: pool })).toString('base64');
         return { data: { content, encoding: 'base64' } };
       },
     },
@@ -32,7 +35,9 @@ function fakeGithub({ pool, prs, reviews = {}, events = {}, comments = {} }) {
       addAssignees: async ({ issue_number, assignees }) => {
         const pr = find(issue_number);
         // Like the API, adding a login that is already assigned is a no-op.
-        const added = assignees.filter(login => !pr.assignees.some(a => eq(a.login, login)));
+        const added = assignees.filter(login =>
+          !pr.assignees.some(a => eq(a.login, login)) &&
+          !unassignable.some(u => eq(u, login)));
         pr.assignees = [...pr.assignees, ...added.map(login => ({ login }))];
       },
       removeAssignees: async ({ issue_number, assignees }) => {
@@ -56,8 +61,9 @@ function fakeCore() {
   const core = {
     failures: [],
     infos: [],
+    warnings: [],
     info: (message) => core.infos.push(message),
-    warning: () => {},
+    warning: (message) => core.warnings.push(message),
     setFailed: (message) => core.failures.push(message),
   };
   return core;

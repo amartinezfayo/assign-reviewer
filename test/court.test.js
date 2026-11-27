@@ -81,3 +81,31 @@ test('setCourt converges when two runs write from the same snapshot', async (t) 
     });
   }
 });
+
+test('setCourt leaves the court alone when GitHub does not assign the login', async () => {
+  const pr = pullRequest({ assignees: ['bob', 'outsider'] });
+  const github = fakeGithub({ pool, prs: [pr], unassignable: ['contributor'] });
+  const core = fakeCore();
+  const court = await loadCourt({ github, context: { repo }, core });
+  await court.setCourt(pr, 'contributor');
+  assert.deepEqual(assigneesOf(pr), ['bob', 'outsider']);
+  assert.deepEqual(core.warnings,
+    ['GitHub did not assign contributor on PR #1, leaving court unchanged.']);
+});
+
+test('a malformed pool file is reported by name', async (t) => {
+  const tests = [
+    { name: 'not JSON', poolFile: 'oops', want: /reviewer-pool\.json is not valid JSON/ },
+    { name: 'not an object', poolFile: 'null', want: /must hold a "reviewers" list/ },
+    { name: 'no reviewers list', poolFile: '{}', want: /reviewer-pool\.json must hold a "reviewers" list/ },
+    { name: 'reviewers is not a list', poolFile: '{"reviewers":"bob"}', want: /must hold a "reviewers" list/ },
+    { name: 'an entry is not a login', poolFile: '{"reviewers":["bob",7]}', want: /must hold a "reviewers" list/ },
+  ];
+  for (const tt of tests) {
+    await t.test(tt.name, async () => {
+      const github = fakeGithub({ pool, prs: [], poolFile: tt.poolFile });
+      await assert.rejects(
+        loadCourt({ github, context: { repo }, core: fakeCore() }), tt.want);
+    });
+  }
+});

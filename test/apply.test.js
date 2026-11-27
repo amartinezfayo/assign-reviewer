@@ -120,6 +120,18 @@ test('apply', async (t) => {
       want: ['contributor'],
     },
     {
+      name: 'the login is assigned as the API spells it',
+      pr: { assignees: ['contributor'] }, reviews: [review('bob', 'APPROVED')],
+      artifact: artifact('BOB', 'approved'),
+      want: ['bob'],
+    },
+    {
+      name: 'an artifact that is not an object is ignored',
+      pr: { assignees: ['contributor'] }, reviews: [review('bob', 'APPROVED')],
+      artifact: 'null',
+      want: ['contributor'],
+    },
+    {
       name: 'malformed JSON is ignored',
       pr: { assignees: ['contributor'] }, reviews: [review('bob', 'APPROVED')],
       artifact: '{not json',
